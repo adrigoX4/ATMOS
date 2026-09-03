@@ -1,0 +1,34 @@
+# Essential Backend Dependencies (Minimal Set)
+# Use this file if full requirements.txt fails
+
+# Core FastAPI Stack
+fastapi>=0.104.1
+uvicorn[standard]>=0.24.0
+pydantic>=2.5.0
+pydantic-settings>=2.0.0
+python-dotenv>=1.0.0
+
+# WebSocket Support
+websockets>=12.0
+python-multipart>=0.0.6
+
+# Database
+sqlalchemy>=2.0.23
+psycopg2-binary>=2.9.9
+alembic>=1.13.0
+
+# Caching & Task Queue
+redis>=5.0.1
+celery[redis]>=5.3.4
+
+# Storage
+minio>=7.2.0
+boto3>=1.33.6
+
+# Data Processing
+numpy>=1.26.2
+pandas>=2.1.3
+xarray>=2023.1.0
+
+# HTTP Client
+httpx>=0.25.2
