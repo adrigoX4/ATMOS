@@ -10,16 +10,12 @@ logger = logging.getLogger(__name__)
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 ENSEMBLE_URL = "https://ensemble-api.open-meteo.com/v1/ensemble"
 
+# Reduced to core operational models to minimize payload weight and avoid Open-Meteo 429
 DETERMINISTIC_MODELS = {
-    "gfs_seamless": "GFS",
     "ecmwf_ifs025": "ECMWF",
+    "gfs_seamless": "GFS",
     "icon_seamless": "ICON",
     "ecmwf_aifs025": "AIFS",
-    "gfs_graphcast025": "GraphCast",
-    "ukmo_seamless": "UKMO",
-    "jma_seamless": "JMA",
-    "meteofrance_seamless": "MF",
-    "cma_grapes_global": "CMA",
 }
 
 ENSEMBLE_MODELS = {
@@ -71,7 +67,6 @@ INDIA_KEY_CITIES = [
 
 class OpenMeteoService:
     def __init__(self):
-        # Increased timeout and configured keep-alive limits
         self.client = httpx.Client(
             timeout=45.0,
             headers={"User-Agent": "ATMOS-WeatherAI/1.0 (academic research)"}
@@ -82,7 +77,7 @@ class OpenMeteoService:
             try:
                 resp = self.client.get(url, params=params)
                 if resp.status_code == 429:
-                    wait_time = attempt * 2.5
+                    wait_time = attempt * 3.0
                     logger.warning(
                         f"Open-Meteo 429 hit. Rate limit backing off for {wait_time}s (attempt {attempt}/{max_retries})..."
                     )
@@ -144,7 +139,6 @@ class OpenMeteoService:
                     continue
                 key = f"{om_var}_{api_key}"
                 if key in hourly and hourly[key] is not None:
-                    # Convert to float64, converting None to NaN
                     raw_arr = [np.nan if x is None else x for x in hourly[key]]
                     model_data[var] = np.array(raw_arr, dtype=np.float64)
             if any(v is not None for v in model_data.values()):
@@ -181,13 +175,13 @@ class OpenMeteoService:
         total = len(grid_points)
 
         for i, (lat, lon) in enumerate(grid_points):
-            logger.info(f"  Fetching point {i+1}/{total}: ({lat},{lon})")
+            logger.info(f"Fetching point {i+1}/{total}: ({lat},{lon})")
             point_data = self.fetch_deterministic_point(
                 lat, lon, variables, deterministic_models, forecast_days
             )
 
-            # Polite pacing to stay under Open-Meteo's rate limiter
-            time.sleep(0.3)
+            # Pacing delay to stay well below Open-Meteo's per-minute threshold
+            time.sleep(1.5)
 
             if not point_data or "_time" not in point_data:
                 logger.warning(f"Skipping point ({lat},{lon}) due to empty API payload.")
@@ -279,7 +273,7 @@ class OpenMeteoService:
             }
 
             data = self._get_with_retry(OPEN_METEO_URL, params)
-            time.sleep(0.3)
+            time.sleep(1.0)
 
             if not data:
                 continue

@@ -47,7 +47,6 @@ class PanIndiaAlertEngine:
         self.is_scanning = False
 
     def detect_synoptic_regime(self, stations_data: list) -> str:
-        """Physically derives synoptic regime from surface pressure and 10m wind direction."""
         if not stations_data:
             return "Synoptic Normal"
             
@@ -76,10 +75,11 @@ class PanIndiaAlertEngine:
         station_diagnostics = []
         now_str = datetime.now().strftime("%H:%M IST")
 
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            # Parallel batch queries of 8 stations to prevent API rate limiting
-            for i in range(0, len(PAN_INDIA_STATIONS), 8):
-                batch = PAN_INDIA_STATIONS[i:i+8]
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            # Paced batches of 3 stations (with 1.5s pause) to prevent rate limits
+            batch_size = 3
+            for i in range(0, len(PAN_INDIA_STATIONS), batch_size):
+                batch = PAN_INDIA_STATIONS[i:i+batch_size]
                 tasks = []
                 for spot in batch:
                     url = (
@@ -100,7 +100,6 @@ class PanIndiaAlertEngine:
                         curr = data.get("current", {})
                         hourly = data.get("hourly", {})
                         
-                        # Real rolling 24-hour cumulative precipitation sum
                         precip_series = hourly.get("precipitation", [])
                         true_24h_precip = sum(precip_series[:24]) if len(precip_series) >= 24 else 0.0
 
@@ -114,7 +113,6 @@ class PanIndiaAlertEngine:
                             "wind_dir": wind_dir
                         })
 
-                        # IMD Standard Criteria
                         # 1. Heavy Rainfall (>= 64.5 mm / 24h)
                         if true_24h_precip >= 64.5:
                             is_red = true_24h_precip >= 115.6
@@ -196,6 +194,9 @@ class PanIndiaAlertEngine:
                             })
                     except Exception as parse_err:
                         logger.warning(f"Failed parsing station {spot['name']}: {parse_err}")
+
+                # Rate-limiting inter-batch sleep
+                await asyncio.sleep(1.5)
 
         self.cached_alerts = evaluated_alerts
         self.active_regime = self.detect_synoptic_regime(station_diagnostics)
