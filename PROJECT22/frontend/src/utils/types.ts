@@ -72,3 +72,32 @@ export interface HourlyForecastItem {
   condition: string;
   icon: string;
 }
+
+export interface ModelInfo {
+  id: string;
+  api_key: string;
+  type: 'deterministic' | 'ensemble';
+  provider: string;
+  skills?: Record<string, number>;
+  members?: number;
+}
+
+export interface WeatherRegime {
+  latitude: number;
+  longitude: number;
+  region: string;
+  season: string;
+  regime: string;
+  timestamp: string;
+}
+
+export interface MultiSourceForecast {
+  latitude: number;
+  longitude: number;
+  variable: string;
+  forecasts: Record<string, {
+    values: number[];
+    times: string[];
+  }>;
+  model_count: number;
+}

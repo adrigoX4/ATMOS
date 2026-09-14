@@ -1,11 +1,9 @@
 import xarray as xr
-from minio import Minio
-from minio.error import S3Error
-from typing import Optional, Dict, BinaryIO
 import json
-import io
 import logging
+import shutil
 from pathlib import Path
+from typing import Dict, List
 
 from app.core.config import get_settings
 
@@ -14,122 +12,68 @@ settings = get_settings()
 
 
 class StorageService:
-    """Handles storage operations with MinIO object store."""
+    """Local filesystem storage using NetCDF format."""
 
     def __init__(self):
-        self.client = Minio(
-            settings.MINIO_ENDPOINT,
-            access_key=settings.MINIO_ACCESS_KEY,
-            secret_key=settings.MINIO_SECRET_KEY,
-            secure=False,
-        )
-        self._ensure_bucket()
+        self.base_dir = Path(settings.DATA_DIR) / "storage"
+        self.base_dir.mkdir(parents=True, exist_ok=True)
 
-    def _ensure_bucket(self):
-        """Create bucket if it doesn't exist."""
-        if not self.client.bucket_exists(settings.MINIO_BUCKET):
-            self.client.make_bucket(settings.MINIO_BUCKET)
-            logger.info(f"Created bucket: {settings.MINIO_BUCKET}")
+    def _resolve_path(self, object_name: str) -> Path:
+        return self.base_dir / object_name
 
-    def upload_zarr_dataset(
-        self, dataset: xr.Dataset, object_name: str
-    ) -> str:
-        """Upload xarray dataset as Zarr to MinIO."""
-        buffer = io.BytesIO()
+    def _to_netcdf_path(self, path: Path) -> Path:
+        """Convert zarr-style path to .nc path."""
+        if path.suffix == ".zarr":
+            return path.with_suffix(".nc")
+        if not path.suffix:
+            return path.with_suffix(".nc")
+        return path
 
-        dataset.to_zarr(buffer, mode="w", consolidated=True)
-        buffer.seek(0)
-
-        self.client.put_object(
-            settings.MINIO_BUCKET,
-            object_name,
-            buffer,
-            length=buffer.getbuffer().nbytes,
-            content_type="application/octet-stream",
-        )
-
-        logger.info(f"Uploaded Zarr dataset to {object_name}")
+    def upload_zarr_dataset(self, dataset: xr.Dataset, object_name: str) -> str:
+        path = self._resolve_path(object_name)
+        nc_path = self._to_netcdf_path(path)
+        nc_path.parent.mkdir(parents=True, exist_ok=True)
+        dataset.to_netcdf(str(nc_path))
+        logger.info(f"Saved NetCDF dataset to {nc_path}")
         return object_name
 
-    def download_zarr_dataset(
-        self, object_name: str
-    ) -> xr.Dataset:
-        """Download and load Zarr dataset from MinIO."""
-        try:
-            response = self.client.get_object(settings.MINIO_BUCKET, object_name)
-            data = io.BytesIO(response.read())
-            response.close()
-            response.release_conn()
+    def download_zarr_dataset(self, object_name: str) -> xr.Dataset:
+        path = self._resolve_path(object_name)
+        nc_path = self._to_netcdf_path(path)
 
-            dataset = xr.open_zarr(data, consolidated=True)
-            logger.info(f"Downloaded Zarr dataset from {object_name}")
-            return dataset
+        # Try zarr first, then netcdf
+        if path.exists() and path.is_dir():
+            return xr.open_zarr(str(path))
+        if nc_path.exists():
+            return xr.open_dataset(str(nc_path), engine="netcdf4")
 
-        except S3Error as e:
-            logger.error(f"Error downloading {object_name}: {e}")
-            raise
+        raise FileNotFoundError(f"Dataset not found: {path} or {nc_path}")
 
     def upload_json(self, data: Dict, object_name: str) -> str:
-        """Upload JSON data to MinIO."""
-        json_bytes = json.dumps(data, indent=2, default=str).encode("utf-8")
-        buffer = io.BytesIO(json_bytes)
-
-        self.client.put_object(
-            settings.MINIO_BUCKET,
-            object_name,
-            buffer,
-            length=len(json_bytes),
-            content_type="application/json",
-        )
-
+        path = self._resolve_path(object_name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2, default=str)
         return object_name
 
     def download_json(self, object_name: str) -> Dict:
-        """Download JSON data from MinIO."""
-        try:
-            response = self.client.get_object(settings.MINIO_BUCKET, object_name)
-            data = json.loads(response.read().decode("utf-8"))
-            response.close()
-            response.release_conn()
-            return data
+        path = self._resolve_path(object_name)
+        if not path.exists():
+            raise FileNotFoundError(f"JSON not found: {path}")
+        with open(path, "r") as f:
+            return json.load(f)
 
-        except S3Error as e:
-            logger.error(f"Error downloading JSON {object_name}: {e}")
-            raise
-
-    def list_objects(self, prefix: str = "") -> list:
-        """List all objects under a prefix."""
-        objects = self.client.list_objects(
-            settings.MINIO_BUCKET, prefix=prefix, recursive=True
-        )
-        return [obj.object_name for obj in objects]
+    def list_objects(self, prefix: str = "") -> List[str]:
+        base = self._resolve_path(prefix)
+        if not base.exists():
+            return []
+        return [str(p.relative_to(self.base_dir)) for p in base.rglob("*") if p.is_file()]
 
     def delete_object(self, object_name: str):
-        """Delete an object from MinIO."""
-        try:
-            self.client.remove_object(settings.MINIO_BUCKET, object_name)
-            logger.info(f"Deleted object: {object_name}")
-        except S3Error as e:
-            logger.error(f"Error deleting {object_name}: {e}")
-            raise
-
-    def upload_local_zarr(self, local_path: str, object_name: str) -> str:
-        """Upload a local Zarr directory to MinIO."""
-        import shutil
-        import tempfile
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            zip_path = shutil.make_archive(
-                tmpdir + "/zarr_archive", "zip", local_path
-            )
-
-            with open(zip_path, "rb") as f:
-                self.client.put_object(
-                    settings.MINIO_BUCKET,
-                    object_name,
-                    f,
-                    length=os.path.getsize(zip_path),
-                    content_type="application/zip",
-                )
-
-        return object_name
+        path = self._resolve_path(object_name)
+        if path.exists():
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+            logger.info(f"Deleted: {path}")

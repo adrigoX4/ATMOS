@@ -104,7 +104,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: weather_celery_beat
-    command: celery -A workers.celery_app beat --loglevel=info
+    command: celery -A app.workers.celery_app beat --loglevel=info
     volumes:
       - ./backend:/app
       - ./data:/app/data

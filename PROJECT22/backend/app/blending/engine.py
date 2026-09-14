@@ -46,9 +46,8 @@ class DynamicBlendingEngine:
                 continue
 
             residuals = ds[variable_name] - obs_dataset[variable_name]
-            residuals = residuals.isel(
-                time=slice(-temporal_window, None) if len(residuals.time) > temporal_window else None
-            )
+            if len(residuals.time) > temporal_window:
+                residuals = residuals.isel(time=slice(-temporal_window, None))
 
             mse = np.square(residuals).mean(dim="time")
 
@@ -303,11 +302,11 @@ class DynamicBlendingEngine:
         output_path: str,
     ) -> Dict[str, str]:
         """Save blended output and weight maps."""
-        blend_path = f"{output_path}/blended.zarr"
-        weight_path = f"{output_path}/weights.zarr"
+        blend_path = f"{output_path}/blended.nc"
+        weight_path = f"{output_path}/weights.nc"
 
-        blended_ds.to_zarr(blend_path, mode="w")
-        weight_ds.to_zarr(weight_path, mode="w")
+        blended_ds.to_netcdf(blend_path)
+        weight_ds.to_netcdf(weight_path)
 
         return {
             "blended_path": blend_path,

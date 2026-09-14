@@ -1,10 +1,10 @@
 import time
 import logging
 from typing import Dict, Optional, Callable
-from fastapi import Request, Response, HTTPException
+from fastapi import Request
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from collections import defaultdict
-import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +31,6 @@ DEFAULT_CONFIGS = {
 
 
 class RateLimiter:
-    """Token bucket rate limiter with sliding window."""
-
     def __init__(self):
         self.requests: Dict[str, list] = defaultdict(list)
         self.burst_counters: Dict[str, int] = defaultdict(int)
@@ -40,23 +38,13 @@ class RateLimiter:
 
     def is_allowed(self, client_id: str, config: RateLimitConfig) -> bool:
         now = time.time()
-
-        self.requests[client_id] = [
-            t for t in self.requests[client_id] if now - t < 3600
-        ]
-
-        minute_requests = [
-            t for t in self.requests[client_id] if now - t < 60
-        ]
+        self.requests[client_id] = [t for t in self.requests[client_id] if now - t < 3600]
+        minute_requests = [t for t in self.requests[client_id] if now - t < 60]
 
         if len(minute_requests) >= config.requests_per_minute:
-            logger.warning(f"Rate limit exceeded for {client_id}: {len(minute_requests)}/min")
             return False
-
         if len(self.requests[client_id]) >= config.requests_per_hour:
-            logger.warning(f"Hourly rate limit exceeded for {client_id}")
             return False
-
         if self.burst_counters[client_id] >= config.burst_limit:
             if now - self.last_reset.get(client_id, 0) < 1:
                 return False
@@ -65,18 +53,12 @@ class RateLimiter:
         self.requests[client_id].append(now)
         self.burst_counters[client_id] += 1
         self.last_reset[client_id] = now
-
         return True
 
     def get_remaining(self, client_id: str, config: RateLimitConfig) -> Dict:
         now = time.time()
-        minute_requests = [
-            t for t in self.requests.get(client_id, []) if now - t < 60
-        ]
-        hour_requests = [
-            t for t in self.requests.get(client_id, []) if now - t < 3600
-        ]
-
+        minute_requests = [t for t in self.requests.get(client_id, []) if now - t < 60]
+        hour_requests = [t for t in self.requests.get(client_id, []) if now - t < 3600]
         return {
             "remaining_minute": max(0, config.requests_per_minute - len(minute_requests)),
             "remaining_hour": max(0, config.requests_per_hour - len(hour_requests)),
@@ -119,15 +101,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         if not rate_limiter.is_allowed(client_id, config):
             remaining = rate_limiter.get_remaining(client_id, config)
-            raise HTTPException(
+            return JSONResponse(
                 status_code=429,
-                detail={
+                content={
                     "error": "Rate limit exceeded",
                     "retry_after": int(remaining["reset_minute"]),
-                    "limits": {
-                        "per_minute": config.requests_per_minute,
-                        "per_hour": config.requests_per_hour,
-                    },
                 },
                 headers={
                     "X-RateLimit-Limit": str(config.requests_per_minute),
@@ -137,16 +115,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             )
 
         response = await call_next(request)
-
         remaining = rate_limiter.get_remaining(client_id, config)
         response.headers["X-RateLimit-Limit"] = str(config.requests_per_minute)
         response.headers["X-RateLimit-Remaining"] = str(remaining["remaining_minute"])
-
         return response
 
 
 def rate_limit(category: str = "default"):
-    """Decorator for per-endpoint rate limiting."""
     config = DEFAULT_CONFIGS.get(category, DEFAULT_CONFIGS["default"])
 
     def decorator(func: Callable):

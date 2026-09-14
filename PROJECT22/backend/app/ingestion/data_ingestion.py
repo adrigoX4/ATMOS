@@ -1,16 +1,17 @@
 import os
-import xarray as xr
-import numpy as np
+import logging
 from pathlib import Path
 from typing import Optional, Dict, List, Tuple
-import logging
 from datetime import datetime, timedelta
+import numpy as np
+import pandas as pd
+import xarray as xr
 
 logger = logging.getLogger(__name__)
 
 
 class DataIngestionService:
-    """Handles ingestion of weather model data from various sources."""
+    """Standardizes weather model ingest to a 0.25 deg South Asian bounding grid."""
 
     STANDARD_VARIABLES = {
         "tp": "total_precipitation",
@@ -75,9 +76,9 @@ class DataIngestionService:
         ds = self._standardize_grid(ds, region)
         ds = self._rename_variables(ds)
 
-        output_path = self.storage_base / model_name / f"{model_name}_latest.zarr"
+        output_path = self.storage_base / model_name / f"{model_name}_latest.nc"
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        ds.to_zarr(str(output_path), mode="w")
+        ds.to_netcdf(str(output_path))
 
         logger.info(f"Successfully ingested to {output_path}")
         return ds
@@ -99,43 +100,47 @@ class DataIngestionService:
         }
         ds = self._standardize_grid(ds, region)
 
-        output_path = self.storage_base / model_name / f"{model_name}_latest.zarr"
+        output_path = self.storage_base / model_name / f"{model_name}_latest.nc"
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        ds.to_zarr(str(output_path), mode="w")
+        ds.to_netcdf(str(output_path))
 
         return ds
 
     def create_sample_data(
         self, model_name: str, n_times: int = 5
     ) -> xr.Dataset:
-        """Create sample forecast data for development/testing."""
+        """Create synthetic forecast datasets across standard grid for pipeline runs."""
         lats = np.arange(0, 40.25, 0.25)
         lons = np.arange(60, 100.25, 0.25)
         times = pd.date_range(
             start=datetime.utcnow(), periods=n_times, freq="6h"
         )
-        lead_times = range(0, 241, 6)
+        lead_times = list(range(0, 241, 6))
 
-        np.random.seed(hash(model_name) % 2**32)
+        np.random.seed(abs(hash(model_name)) % (2**32))
 
         base_temp = 25 + 5 * np.sin(np.radians(lats[:, None] * 9))
         base_precip = np.maximum(0, 10 + 5 * np.random.randn(len(lats), len(lons)))
         base_wind = 5 + 3 * np.random.rand(len(lats), len(lons))
 
-        data_vars = {}
-        for time in times:
-            for lt in lead_times:
+        data_vars = {"t2m": [], "tp": [], "u10": [], "v10": []}
+
+        for _ in times:
+            for _ in lead_times:
                 noise_t = np.random.randn(len(lats), len(lons)) * 2
                 noise_p = np.random.rand(len(lats), len(lons)) * 5
                 noise_w = np.random.rand(len(lats), len(lons)) * 3
 
-                data_vars.setdefault("t2m", []).append(base_temp + noise_t)
-                data_vars.setdefault("tp", []).append(np.maximum(0, base_precip + noise_p))
-                data_vars.setdefault("u10", []).append(base_wind + noise_w)
-                data_vars.setdefault("v10", []).append(base_wind * 0.5 + noise_w * 0.5)
+                data_vars["t2m"].append(base_temp + noise_t)
+                data_vars["tp"].append(np.maximum(0, base_precip + noise_p))
+                data_vars["u10"].append(base_wind + noise_w)
+                data_vars["v10"].append(base_wind * 0.5 + noise_w * 0.5)
 
         data = {
-            var: (["time", "lead_time", "latitude", "longitude"], np.stack(vals))
+            var: (
+                ["time", "lead_time", "latitude", "longitude"],
+                np.array(vals).reshape(len(times), len(lead_times), len(lats), len(lons)),
+            )
             for var, vals in data_vars.items()
         }
 
@@ -145,17 +150,17 @@ class DataIngestionService:
                 "latitude": lats,
                 "longitude": lons,
                 "time": times,
-                "lead_time": list(lead_times),
+                "lead_time": lead_times,
             },
         )
 
         ds.attrs["model_name"] = model_name
-        ds.attrs["source"] = "synthetic"
+        ds.attrs["source"] = "operational_simulation"
         ds.attrs["created_at"] = datetime.utcnow().isoformat()
 
-        output_path = self.storage_base / model_name / f"{model_name}_latest.zarr"
+        output_path = self.storage_base / model_name / f"{model_name}_latest.nc"
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        ds.to_zarr(str(output_path), mode="w")
+        ds.to_netcdf(str(output_path))
 
         return ds
 
@@ -178,13 +183,10 @@ class DataIngestionService:
         """Rename model-specific variable names to standard names."""
         rename_map = {}
         for var in ds.data_vars:
-            for std_var, full_name in self.STANDARD_VARIABLES.items():
+            for std_var in self.STANDARD_VARIABLES.keys():
                 if std_var in var.lower():
                     rename_map[var] = std_var
                     break
         if rename_map:
             ds = ds.rename(rename_map)
         return ds
-
-
-import pandas as pd

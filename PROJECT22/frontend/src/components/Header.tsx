@@ -1,12 +1,13 @@
 import React from 'react';
-import { Cloud, Sun, CloudRain, Snowflake, Map, BarChart3, AlertTriangle, Activity } from 'lucide-react';
+import { Cloud, Sun, CloudRain, Snowflake, Map, BarChart3, AlertTriangle, Activity, Layers, LocateIcon } from 'lucide-react';
 import { WeatherMode } from '../utils/types';
 
 interface HeaderProps {
   weatherMode: WeatherMode;
   onWeatherModeChange: (mode: WeatherMode) => void;
-  activeTab: 'map' | 'weights' | 'alerts' | 'metrics';
-  onTabChange: (tab: 'map' | 'weights' | 'alerts' | 'metrics') => void;
+  activeTab: 'map' | 'weights' | 'alerts' | 'metrics' | 'models';
+  onTabChange: (tab: 'map' | 'weights' | 'alerts' | 'metrics' | 'models') => void;
+  getCurrentLocation?: () => void;
 }
 
 const Header: React.FC<HeaderProps> = ({
@@ -14,13 +15,36 @@ const Header: React.FC<HeaderProps> = ({
   onWeatherModeChange,
   activeTab,
   onTabChange,
+  getCurrentLocation,
 }) => {
   const tabs = [
     { id: 'map' as const, label: 'Forecast Map', icon: Map },
     { id: 'weights' as const, label: 'Model Weights', icon: BarChart3 },
     { id: 'alerts' as const, label: 'Alerts', icon: AlertTriangle },
     { id: 'metrics' as const, label: 'Metrics', icon: Activity },
+    { id: 'models' as const, label: 'Models', icon: Layers },
   ];
+
+  const modeTooltips = {
+    sun: 'Sunny / Clear weather mode',
+    rain: 'Rainy / Precipitation weather mode',
+    snow: 'Snow / Winter weather mode',
+  };
+
+  const handleLocationClick = () => {
+    if (getCurrentLocation) {
+      getCurrentLocation();
+    } else if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          console.log('Detected position:', position.coords.latitude, position.coords.longitude);
+        },
+        (error) => {
+          console.error('Geolocation error:', error);
+        }
+      );
+    }
+  };
 
   return (
     <header className="glass-card rounded-2xl p-4 md:p-6">
@@ -61,6 +85,7 @@ const Header: React.FC<HeaderProps> = ({
                 ? 'bg-amber-500/20 text-amber-300'
                 : 'text-slate-400 hover:bg-slate-700/50'
             }`}
+            title={modeTooltips.sun}
           >
             <Sun className="w-5 h-5" />
           </button>
@@ -71,6 +96,7 @@ const Header: React.FC<HeaderProps> = ({
                 ? 'bg-sky-500/20 text-sky-300'
                 : 'text-slate-400 hover:bg-slate-700/50'
             }`}
+            title={modeTooltips.rain}
           >
             <CloudRain className="w-5 h-5" />
           </button>
@@ -81,8 +107,16 @@ const Header: React.FC<HeaderProps> = ({
                 ? 'bg-indigo-500/20 text-indigo-300'
                 : 'text-slate-400 hover:bg-slate-700/50'
             }`}
+            title={modeTooltips.snow}
           >
             <Snowflake className="w-5 h-5" />
+          </button>
+          <button
+            onClick={handleLocationClick}
+            className="p-2 rounded-lg transition-all text-slate-400 hover:bg-slate-700/50"
+            title="Use current location"
+          >
+            <LocateIcon className="w-4 h-4" />
           </button>
         </div>
       </div>

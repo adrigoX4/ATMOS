@@ -1,6 +1,10 @@
 from pydantic_settings import BaseSettings
 from functools import lru_cache
 import os
+from pathlib import Path
+
+_backend_dir = Path(__file__).resolve().parent.parent.parent
+_data_dir = str(_backend_dir / "data")
 
 
 class Settings(BaseSettings):
@@ -9,15 +13,7 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     API_PREFIX: str = "/api/v1"
 
-    DATABASE_URL: str = os.getenv(
-        "DATABASE_URL",
-        "postgresql+psycopg2://weather:weather123@localhost:5432/weather_blending"
-    )
-    REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-    MINIO_ENDPOINT: str = os.getenv("MINIO_ENDPOINT", "localhost:9000")
-    MINIO_ACCESS_KEY: str = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
-    MINIO_SECRET_KEY: str = os.getenv("MINIO_SECRET_KEY", "minioadmin")
-    MINIO_BUCKET: str = os.getenv("MINIO_BUCKET", "weather-forecasts")
+    DATABASE_URL: str = f"sqlite:///{_data_dir}/weather.db"
 
     # Grid configuration (South Asia 0.25 degree)
     GRID_LAT_MIN: float = 0.0
@@ -37,9 +33,13 @@ class Settings(BaseSettings):
     HEATWAVE_TEMP_THRESHOLD: float = 40.0
     SEVERE_WIND_THRESHOLD_KMH: float = 60.0
 
+    # Local storage paths
+    DATA_DIR: str = _data_dir
+
     class Config:
         case_sensitive = True
         env_file = ".env"
+        extra = "ignore"
 
 
 @lru_cache()

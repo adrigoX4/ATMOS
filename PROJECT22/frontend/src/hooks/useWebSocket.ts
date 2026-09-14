@@ -34,7 +34,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
   const [isConnected, setIsConnected] = useState(false);
   const [lastMessage, setLastMessage] = useState<WebSocketMessage | null>(null);
   const [alerts, setAlerts] = useState<ExtremeAlert[]>([]);
-  const reconnectTimeoutRef = useRef<NodeNumber | null>(null);
+  const reconnectTimeoutRef = useRef<number | null>(null);
   const clientIdRef = useRef(client_id || `client_${Math.random().toString(36).substr(2, 9)}`);
 
   const connect = useCallback(() => {
@@ -43,9 +43,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
     const ws = new WebSocket(`${url}/${clientIdRef.current}`);
 
     ws.onopen = () => {
-      console.log('WebSocket connected');
       setIsConnected(true);
-
       if (alert_types || severities) {
         ws.send(JSON.stringify({
           action: 'subscribe',
@@ -59,12 +57,10 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
       try {
         const message: WebSocketMessage = JSON.parse(event.data);
         setLastMessage(message);
-
         switch (message.type) {
           case 'alert':
-            const alert = message.data as ExtremeAlert;
-            setAlerts(prev => [alert, ...prev].slice(0, 50));
-            onAlert?.(alert);
+            setAlerts(prev => [message.data as ExtremeAlert, ...prev].slice(0, 50));
+            onAlert?.(message.data);
             break;
           case 'metrics_update':
             onMetrics?.(message.data);
@@ -73,9 +69,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
             onWeights?.(message.data);
             break;
           case 'pong':
-            break;
           case 'subscription_confirmed':
-            console.log('Subscribed:', message.data);
             break;
         }
       } catch (error) {
@@ -84,26 +78,17 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
     };
 
     ws.onclose = () => {
-      console.log('WebSocket disconnected');
       setIsConnected(false);
       wsRef.current = null;
-
-      reconnectTimeoutRef.current = window.setTimeout(() => {
-        connect();
-      }, 5000);
+      reconnectTimeoutRef.current = window.setTimeout(() => { connect(); }, 5000);
     };
 
-    ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
-    };
-
+    ws.onerror = () => {};
     wsRef.current = ws;
   }, [url, alert_types, severities, onAlert, onMetrics, onWeights]);
 
   const disconnect = useCallback(() => {
-    if (reconnectTimeoutRef.current) {
-      clearTimeout(reconnectTimeoutRef.current);
-    }
+    if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
     wsRef.current?.close();
     wsRef.current = null;
     setIsConnected(false);
@@ -116,34 +101,17 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
   }, []);
 
   const subscribe = useCallback((types: string[], sevs: string[]) => {
-    sendMessage({
-      action: 'subscribe',
-      alert_types: types,
-      severities: sevs,
-    });
+    sendMessage({ action: 'subscribe', alert_types: types, severities: sevs });
   }, [sendMessage]);
 
-  const ping = useCallback(() => {
-    sendMessage({ action: 'ping' });
-  }, [sendMessage]);
+  const ping = useCallback(() => { sendMessage({ action: 'ping' }); }, [sendMessage]);
 
   useEffect(() => {
-    if (autoConnect) {
-      connect();
-    }
+    if (autoConnect) connect();
     return () => disconnect();
   }, [autoConnect, connect, disconnect]);
 
-  return {
-    isConnected,
-    lastMessage,
-    alerts,
-    connect,
-    disconnect,
-    sendMessage,
-    subscribe,
-    ping,
-  };
+  return { isConnected, lastMessage, alerts, connect, disconnect, sendMessage, subscribe, ping };
 }
 
 export default useWebSocket;
