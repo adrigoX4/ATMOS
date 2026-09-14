@@ -70,6 +70,22 @@ def create_application() -> FastAPI:
         lifespan=lifespan,
     )
 
+    # Allow requests from local dev, custom domain, and all Vercel deployment URLs
+    origins = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "https://atmos-mu-eight.vercel.app",
+    ]
+
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_origin_regex=r"https://.*\.vercel\.app",
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
     application.include_router(api_router, prefix=settings.API_PREFIX)
 
     @application.exception_handler(ValueError)
@@ -119,15 +135,6 @@ def create_application() -> FastAPI:
     @application.get("/ws/stats", tags=["WebSocket"])
     async def websocket_stats():
         return manager.get_connection_stats()
-
-    # Outermost CORS Middleware wrapper
-    application.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=False,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
 
     return application
 
