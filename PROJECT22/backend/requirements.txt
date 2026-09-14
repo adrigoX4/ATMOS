@@ -1,4 +1,4 @@
-# Backend - No external services required
+# Backend - Production Setup
 
 # Core API
 fastapi>=0.104.1
@@ -9,8 +9,9 @@ python-dotenv>=1.0.0
 python-multipart>=0.0.6
 websockets>=12.0
 
-# Database (SQLite - no server needed)
+# Database & Drivers
 sqlalchemy>=2.0.23
+psycopg2-binary>=2.9.9
 
 # Data Processing
 numpy>=1.26.2
