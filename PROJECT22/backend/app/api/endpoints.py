@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import logging
 import os
@@ -7,6 +7,7 @@ import traceback
 from typing import Dict, List, Optional
 import urllib.request
 
+from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 import httpx
@@ -21,15 +22,18 @@ from app.models.models import BlendResult, ExtremeWeatherAlert, ForecastRun, Mod
 from app.storage.minio_service import StorageService
 from app.workers.alert_scanner import PAN_INDIA_STATIONS, alert_engine
 
+# Load secrets from backend/.env
+load_dotenv()
+
 router = APIRouter()
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
-# Penta-Source API Keys Configuration
-WEATHER_API_KEY = "3a35b6c01ff54ec5933131252261408"
-OPENWEATHER_API_KEY = "2d8c07b839e753e0722f3fd1751a5a0b"
-VISUAL_CROSSING_KEY = "SMY9HGG8JH4U6ZWY4HHJN23U2"
-TOMORROW_API_KEY = "09de76efcef845309e08c776dd20e3d4"
+# Secure Penta-Source API Configuration via Environment Variables
+WEATHER_API_KEY = os.getenv("WEATHER_API_KEY", "")
+OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY", "")
+VISUAL_CROSSING_KEY = os.getenv("VISUAL_CROSSING_KEY", "")
+TOMORROW_API_KEY = os.getenv("TOMORROW_API_KEY", "")
 
 
 def resolve_weather_condition(precip: float, clouds: int) -> tuple[int, str]:
@@ -448,6 +452,8 @@ async def get_live_weather(
 
     async with httpx.AsyncClient(headers=headers, timeout=timeout) as client:
         async def fetch_wapi():
+            if not WEATHER_API_KEY:
+                return "WeatherAPI", None
             url = f"https://api.weatherapi.com/v1/current.json?key={WEATHER_API_KEY}&q={lat},{lon}&aqi=no"
             r = await client.get(url)
             if r.status_code == 200:
@@ -483,6 +489,8 @@ async def get_live_weather(
             return "Open-Meteo", None
 
         async def fetch_owm():
+            if not OPENWEATHER_API_KEY:
+                return "OpenWeatherMap", None
             url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={OPENWEATHER_API_KEY}&units=metric"
             r = await client.get(url)
             if r.status_code == 200:
@@ -501,6 +509,8 @@ async def get_live_weather(
             return "OpenWeatherMap", None
 
         async def fetch_visual_crossing():
+            if not VISUAL_CROSSING_KEY:
+                return "VisualCrossing", None
             url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/{lat},{lon}/today?unitGroup=metric&key={VISUAL_CROSSING_KEY}&contentType=json"
             r = await client.get(url)
             if r.status_code == 200:
@@ -516,6 +526,8 @@ async def get_live_weather(
             return "VisualCrossing", None
 
         async def fetch_tomorrow():
+            if not TOMORROW_API_KEY:
+                return "Tomorrow.io", None
             url = f"https://api.tomorrow.io/v4/weather/realtime?location={lat},{lon}&apikey={TOMORROW_API_KEY}"
             r = await client.get(url)
             if r.status_code == 200:
@@ -1245,7 +1257,6 @@ async def get_earth_engine_verification(
     from app.storage.earth_engine import GoogleEarthEngineService
 
     if start_date is None:
-        from datetime import timedelta
         start_date = (datetime.utcnow() - timedelta(days=7)).strftime("%Y-%m-%d")
     if end_date is None:
         end_date = datetime.utcnow().strftime("%Y-%m-%d")

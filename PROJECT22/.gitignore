@@ -2,33 +2,30 @@
 node_modules/
 frontend/node_modules/
 
-# Environment
-backend/.env
+# Environment / Secrets (matches .env anywhere in the repo)
+*.env
 .env
+.env.*
+backend/.env
 
 # Data
 data/
 *.db
+*.sqlite3
 
 # Python
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+*$py.class
 *.egg-info/
 dist/
 build/
-.eggs/
-*.egg
 venv/
 .venv/
 
-# IDE
+# IDE & OS
 .vscode/
 .idea/
-*.swp
-*.swo
-
-# OS
 .DS_Store
 Thumbs.db
 
