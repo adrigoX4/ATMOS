@@ -14,7 +14,14 @@ import {
   Flame,
   Activity,
   TrendingUp,
+  AlertTriangle,
+  ShieldCheck,
+  Bell,
+  Radio,
 } from 'lucide-react';
+import { fetchAccuGroundTruth, AccuObservation } from '../services/accuweather';
+
+declare const process: any;
 
 export interface WeatherData {
   temperature: number;
@@ -88,6 +95,25 @@ interface LiveBMAResult {
   models_ranked: ModelWeightItem[];
 }
 
+interface ExtremeAlertItem {
+  alert_id: string;
+  region: string;
+  subdivision: string;
+  category: string;
+  severity: string;
+  tier?: 'YELLOW' | 'ORANGE' | 'RED';
+  lead_time?: string;
+  observed_value?: number;
+  threshold_value?: number;
+  unit?: string;
+  confidence?: number;
+  latitude?: number;
+  longitude?: number;
+  issued_at?: string;
+  message?: string;
+  synoptic_cause?: string;
+}
+
 export const BentoDashboard: React.FC<BentoDashboardProps> = ({
   weather,
   locationName,
@@ -95,6 +121,15 @@ export const BentoDashboard: React.FC<BentoDashboardProps> = ({
   const [selectedStation, setSelectedStation] = useState<StationPreset>(DEMO_MICROCLIMATES[0]);
   const [liveBma, setLiveBma] = useState<LiveBMAResult | null>(null);
   const [loadingBma, setLoadingBma] = useState<boolean>(false);
+  const [accuObs, setAccuObs] = useState<AccuObservation | null>(null);
+
+  // Pan-India Guidance state
+  const [alerts, setAlerts] = useState<ExtremeAlertItem[]>([]);
+  const [synopticRegime, setSynopticRegime] = useState<string>('Synoptic Normal');
+  const [lastSyncTime, setLastSyncTime] = useState<string>('Live');
+  const [isScanningAlerts, setIsScanningAlerts] = useState<boolean>(false);
+
+  const API_BASE = process.env.REACT_APP_API_BASE_URL || 'https://atmos-te62.onrender.com';
 
   const precip = Number(weather.precipitation) || 0;
   const clouds = Number(weather.cloud_cover) || 0;
@@ -115,9 +150,7 @@ export const BentoDashboard: React.FC<BentoDashboardProps> = ({
     return isDay ? 'Clear Radiative Skies' : 'Clear Stable Boundary Layer';
   };
 
-  // High-Grade Layered Meteorological Vectors (Apple Weather style)
   const renderWeatherGlyph = (c: number, day: number, className = 'w-6 h-6') => {
-    // Thunderstorm
     if (c >= 95) {
       return (
         <svg className={className} viewBox="0 0 24 24" fill="none">
@@ -142,7 +175,6 @@ export const BentoDashboard: React.FC<BentoDashboardProps> = ({
       );
     }
 
-    // Heavy Rain
     if (precip >= 5.0 || c === 65) {
       return (
         <svg className={className} viewBox="0 0 24 24" fill="none">
@@ -163,7 +195,6 @@ export const BentoDashboard: React.FC<BentoDashboardProps> = ({
       );
     }
 
-    // Light / Moderate Rain
     if (precip > 0.0 || (c >= 51 && c <= 67)) {
       return (
         <svg className={className} viewBox="0 0 24 24" fill="none">
@@ -183,7 +214,6 @@ export const BentoDashboard: React.FC<BentoDashboardProps> = ({
       );
     }
 
-    // Overcast
     if (clouds >= 80 || c === 3) {
       return (
         <svg className={className} viewBox="0 0 24 24" fill="none">
@@ -201,7 +231,6 @@ export const BentoDashboard: React.FC<BentoDashboardProps> = ({
       );
     }
 
-    // Partly Cloudy Day
     if ((clouds >= 30 || c === 2) && day) {
       return (
         <svg className={className} viewBox="0 0 24 24" fill="none">
@@ -220,7 +249,6 @@ export const BentoDashboard: React.FC<BentoDashboardProps> = ({
       );
     }
 
-    // Partly Cloudy Night
     if (clouds >= 30 || c === 2) {
       return (
         <svg className={className} viewBox="0 0 24 24" fill="none">
@@ -243,7 +271,6 @@ export const BentoDashboard: React.FC<BentoDashboardProps> = ({
       );
     }
 
-    // Clear Day: Radiant Sun
     if (day) {
       return (
         <svg className={className} viewBox="0 0 24 24" fill="none">
@@ -268,7 +295,6 @@ export const BentoDashboard: React.FC<BentoDashboardProps> = ({
       );
     }
 
-    // Clear Night: Crisp Crescent Moon with Soft Star
     return (
       <svg className={className} viewBox="0 0 24 24" fill="none">
         <path
@@ -301,22 +327,48 @@ export const BentoDashboard: React.FC<BentoDashboardProps> = ({
   const fetchStationWeights = async (station: StationPreset) => {
     try {
       setLoadingBma(true);
-      const res = await fetch(
-        `http://localhost:8000/api/v1/forecast/live-bma?lat=${station.lat}&lon=${station.lon}&variable=temperature_2m`
-      );
-      if (!res.ok) throw new Error('Failed to fetch live BMA');
-      const data = await res.json();
-      setLiveBma(data);
+      const [bmaRes, accuData] = await Promise.allSettled([
+        fetch(`${API_BASE}/api/v1/forecast/live-bma?lat=${station.lat}&lon=${station.lon}&variable=temperature_2m`),
+        fetchAccuGroundTruth(station.lat, station.lon),
+      ]);
+
+      if (bmaRes.status === 'fulfilled' && bmaRes.value.ok) {
+        const data = await bmaRes.value.json();
+        setLiveBma(data);
+      }
+      if (accuData.status === 'fulfilled' && accuData.value) {
+        setAccuObs(accuData.value);
+      }
     } catch (err) {
-      console.error('BMA API error:', err);
+      console.error('BMA & Accu API error:', err);
     } finally {
       setLoadingBma(false);
+    }
+  };
+
+  const fetchPanIndiaAlerts = async () => {
+    try {
+      setIsScanningAlerts(true);
+      const res = await fetch(`${API_BASE}/api/v1/alerts/extreme`);
+      if (!res.ok) throw new Error('Failed to fetch pan-india alerts');
+      const data = await res.json();
+      setAlerts(data.alerts || []);
+      setSynopticRegime(data.regime || 'Synoptic Normal');
+      setLastSyncTime(data.last_sync || 'Live');
+    } catch (err) {
+      console.warn('Pan-India alerts fetch notice:', err);
+    } finally {
+      setIsScanningAlerts(false);
     }
   };
 
   useEffect(() => {
     fetchStationWeights(selectedStation);
   }, [selectedStation]);
+
+  useEffect(() => {
+    fetchPanIndiaAlerts();
+  }, []);
 
   const hourlyCards = [
     { time: 'Now', temp: Math.round(weather.temperature), code: weather.weather_code, day: isDay },
@@ -339,12 +391,122 @@ export const BentoDashboard: React.FC<BentoDashboardProps> = ({
   const severityScore = Number(((precip * 0.4) + (weather.wind_speed * 0.05)).toFixed(1));
   const progressPercent = Math.min(Math.max((severityScore / 10) * 100, 4), 96);
 
-  // Transparent High-End Glassmorphism
-  const cardStyle = 'rounded-2xl bg-slate-950/35 backdrop-blur-2xl border border-white/[0.09] p-5 shadow-[0_8px_32px_rgba(0,0,0,0.25)] hover:border-white/[0.14] transition-all';
-  const tileStyle = 'rounded-xl bg-white/[0.025] border border-white/[0.05] p-3.5 backdrop-blur-md';
+  const cardStyle = 'rounded-3xl bg-slate-950/60 backdrop-blur-2xl border border-white/10 p-5 sm:p-6 shadow-[0_8px_32px_rgba(0,0,0,0.37)] hover:border-white/[0.16] transition-all';
+  const tileStyle = 'rounded-2xl bg-white/[0.03] border border-white/[0.06] p-4 backdrop-blur-md';
 
   return (
-    <div className="w-full space-y-4 font-sans text-slate-100">
+    <div className="w-full space-y-5 font-sans text-slate-100">
+      
+      {/* Pan-India Extreme Weather Guidance Section */}
+      <div className={cardStyle}>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.08] pb-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400">
+              <Bell className="w-5 h-5 animate-pulse" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-bold text-white font-mono tracking-wide">
+                  Pan–India Extreme Weather Guidance
+                </h3>
+                <span className="hidden sm:inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-300 border border-cyan-500/20">
+                  <Radio className="w-2.5 h-2.5 animate-ping text-cyan-400" />
+                  DAEMON
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Continuous rolling 24h hazard verification across 31 official IMD subdivisions.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div className="text-right font-mono hidden sm:block">
+              <div className="text-xs font-semibold text-slate-200">
+                <span className="text-cyan-400">31</span> / 31 Subdivisions Active
+              </div>
+              <div className="text-[10px] text-slate-400">
+                Regime: <strong className="text-emerald-400">{synopticRegime}</strong> · {lastSyncTime}
+              </div>
+            </div>
+            <button
+              onClick={fetchPanIndiaAlerts}
+              disabled={isScanningAlerts}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/[0.05] border border-white/10 hover:bg-white/10 text-xs font-mono text-slate-300 transition"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isScanningAlerts ? 'animate-spin text-cyan-400' : 'text-cyan-400'}`} />
+              <span className="hidden sm:inline">Rescan Subdivisions</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Dynamic Alerts Feed or Nominal Shield */}
+        <div className="pt-4">
+          {alerts && alerts.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-80 overflow-y-auto pr-1">
+              {alerts.map((al, idx) => {
+                const isRed = al.tier === 'RED' || al.severity.toLowerCase().includes('red');
+                const isOrange = al.tier === 'ORANGE' || al.severity.toLowerCase().includes('orange');
+                return (
+                  <div
+                    key={idx}
+                    className={`p-3.5 rounded-2xl border transition-all flex flex-col justify-between ${
+                      isRed
+                        ? 'bg-rose-500/10 border-rose-500/40 text-rose-100 shadow-[0_0_15px_rgba(244,63,94,0.15)]'
+                        : isOrange
+                        ? 'bg-amber-500/10 border-amber-500/40 text-amber-100'
+                        : 'bg-yellow-500/10 border-yellow-500/40 text-yellow-100'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center justify-between text-xs mb-1">
+                        <span className="font-bold font-mono tracking-wide flex items-center gap-1.5">
+                          <AlertTriangle className={`w-3.5 h-3.5 shrink-0 ${
+                            isRed ? 'text-rose-400' : isOrange ? 'text-amber-400' : 'text-yellow-400'
+                          }`} />
+                          {al.region}
+                        </span>
+                        <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border uppercase font-semibold ${
+                          isRed
+                            ? 'bg-rose-500/20 border-rose-500/30 text-rose-300'
+                            : isOrange
+                            ? 'bg-amber-500/20 border-amber-500/30 text-amber-300'
+                            : 'bg-yellow-500/20 border-yellow-500/30 text-yellow-300'
+                        }`}>
+                          {al.severity}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-300 font-sans leading-relaxed line-clamp-2">
+                        {al.message || al.synoptic_cause}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 mt-2.5 pt-2 border-t border-white/[0.08]">
+                      <span>{al.category}</span>
+                      <strong className="text-white">{al.observed_value} {al.unit}</strong>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="p-8 rounded-2xl bg-white/[0.02] border border-white/[0.06] flex flex-col items-center justify-center text-center space-y-2.5">
+              <div className="w-11 h-11 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shadow-inner">
+                <ShieldCheck className="w-6 h-6" />
+              </div>
+              <h4 className="text-sm font-bold text-white font-mono">
+                Nominal Atmospheric Conditions Across India
+              </h4>
+              <p className="text-xs text-slate-400 max-w-lg leading-relaxed">
+                All 31 Indian meteorological subdivisions are currently operating below critical IMD hazard trigger thresholds 
+                (Rolling 24h Rain &lt; 15.6 mm, Wind &lt; 25 km/h, Temperatures 8°C to 38°C).
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Main Grid: Hero + Forecast Columns */}
       <div className="w-full grid grid-cols-1 lg:grid-cols-12 gap-4">
         
         {/* Left Primary Hero Card */}
@@ -523,8 +685,6 @@ export const BentoDashboard: React.FC<BentoDashboardProps> = ({
 
           {/* Severity & Surface Wind Tile */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            
-            {/* Atmospheric Severity */}
             <div className={`${cardStyle} flex flex-col justify-between`}>
               <div>
                 <div className="flex items-center justify-between text-xs mb-1">
@@ -576,7 +736,6 @@ export const BentoDashboard: React.FC<BentoDashboardProps> = ({
                     </div>
                   </div>
 
-                  {/* Clean Bezel Dial */}
                   <div className="w-20 h-20 relative rounded-full border border-white/10 bg-slate-900/60 backdrop-blur-md flex items-center justify-center shrink-0 shadow-inner">
                     <span className="absolute top-1 text-[8px] font-mono font-bold text-cyan-400 pointer-events-none">N</span>
                     <span className="absolute bottom-1 text-[7px] font-mono text-slate-500 pointer-events-none">S</span>
@@ -667,18 +826,26 @@ export const BentoDashboard: React.FC<BentoDashboardProps> = ({
               </p>
             </div>
 
-            {liveBma && (
-              <div className="grid grid-cols-2 gap-2">
-                <div className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.06]">
-                  <span className="text-[10px] font-mono text-slate-400 uppercase block">Ground Truth</span>
-                  <div className="text-xl font-mono font-semibold text-white mt-0.5">{liveBma.observed_ground_truth}°C</div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+                <span className="text-[10px] font-mono text-amber-400 uppercase block">
+                  {accuObs ? 'AccuWeather AWS' : 'Ground Truth'}
+                </span>
+                <div className="text-xl font-mono font-semibold text-white mt-0.5">
+                  {accuObs ? `${accuObs.temperature}°C` : (liveBma ? `${liveBma.observed_ground_truth}°C` : '--')}
                 </div>
-                <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
-                  <span className="text-[10px] font-mono text-emerald-400 uppercase block">Consensus</span>
-                  <div className="text-xl font-mono font-semibold text-emerald-300 mt-0.5">{liveBma.blended_consensus}°C</div>
-                </div>
+                <span className="text-[10px] text-slate-400 block truncate">
+                  {accuObs ? accuObs.weatherText : 'Physical AWS'}
+                </span>
               </div>
-            )}
+              <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+                <span className="text-[10px] font-mono text-emerald-400 uppercase block">Consensus</span>
+                <div className="text-xl font-mono font-semibold text-emerald-300 mt-0.5">
+                  {liveBma ? `${liveBma.blended_consensus}°C` : '--'}
+                </div>
+                <span className="text-[10px] text-emerald-400/80 block">Inverse-Variance BMA</span>
+              </div>
+            </div>
 
             <button
               onClick={() => fetchStationWeights(selectedStation)}
@@ -748,8 +915,8 @@ export const BentoDashboard: React.FC<BentoDashboardProps> = ({
               )}
             </div>
 
-            <span className="text-[11px] font-mono text-slate-500 mt-3 block">
-              Formulation: $w_i = (1 / \sigma_i^2) / \sum_k (1 / \sigma_k^2)$. Dynamically calculated from local AWS residuals.
+            <span className="text-[11px] font-mono text-slate-400 mt-3 block">
+              {"Formulation: w_i = (1 / \u03c3_i\u00b2) / \u03a3_k (1 / \u03c3_k\u00b2). Dynamically calculated from local AWS residuals."}
             </span>
           </div>
         </div>

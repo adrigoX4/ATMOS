@@ -69,14 +69,13 @@ class PanIndiaAlertEngine:
         if self.is_scanning:
             return
         self.is_scanning = True
-        logger.info("Initiating server-side Pan-India IMD threshold audit...")
+        logger.info("Initiating server-side Pan-India multi-tier hazard audit...")
 
         evaluated_alerts = []
         station_diagnostics = []
         now_str = datetime.now().strftime("%H:%M IST")
 
         async with httpx.AsyncClient(timeout=20.0) as client:
-            # Paced batches of 3 stations (with 1.5s pause) to prevent rate limits
             batch_size = 3
             for i in range(0, len(PAN_INDIA_STATIONS), batch_size):
                 batch = PAN_INDIA_STATIONS[i:i+batch_size]
@@ -113,89 +112,153 @@ class PanIndiaAlertEngine:
                             "wind_dir": wind_dir
                         })
 
-                        # 1. Heavy Rainfall (>= 64.5 mm / 24h)
-                        if true_24h_precip >= 64.5:
-                            is_red = true_24h_precip >= 115.6
+                        # ---------------- 1. MULTI-TIER PRECIPITATION ----------------
+                        if true_24h_precip >= 15.6:
+                            if true_24h_precip >= 115.6:
+                                severity = "Red Alert"
+                                tier = "RED"
+                                cat = "Extremely Heavy Rainfall"
+                                cause = "Monsoonal mesoscale convective complex / cloudburst risk."
+                                conf = 95
+                            elif true_24h_precip >= 64.5:
+                                severity = "Orange Alert"
+                                tier = "ORANGE"
+                                cat = "Heavy Rainfall"
+                                cause = "Monsoonal cyclonic convergence and deep convective cloud mass."
+                                conf = 90
+                            else:
+                                severity = "Yellow Advisory"
+                                tier = "YELLOW"
+                                cat = "Moderate Rainfall Advisory"
+                                cause = "Active convective showers causing localized drainage and road waterlogging."
+                                conf = 85
+
                             evaluated_alerts.append({
                                 "alert_id": f"ALT-RAIN-{spot['name'][:4].upper()}",
                                 "region": spot["name"],
                                 "subdivision": spot["sub"],
-                                "category": "Heavy Rainfall",
-                                "severity": "Red Alert" if is_red else "Orange Alert",
+                                "category": cat,
+                                "severity": severity,
+                                "tier": tier,
                                 "lead_time": "Lead T+24h Horizon",
                                 "observed_value": round(true_24h_precip, 1),
-                                "threshold_value": 64.5,
+                                "threshold_value": 15.6,
                                 "unit": "mm",
-                                "confidence": 94 if is_red else 89,
+                                "confidence": conf,
                                 "latitude": spot["lat"],
                                 "longitude": spot["lon"],
                                 "issued_at": now_str,
-                                "synoptic_cause": "Monsoonal cyclonic convergence and deep convective cloud mass."
+                                "synoptic_cause": cause
                             })
 
-                        # 2. Heatwave (>= 40.0 °C)
-                        if temp >= 40.0:
-                            is_red = temp >= 44.0
+                        # ---------------- 2. MULTI-TIER WIND & SQUALL ----------------
+                        if wind >= 25.0:
+                            if wind >= 62.0:
+                                severity = "Red Alert"
+                                tier = "RED"
+                                cat = "Gale Force Squall"
+                                cause = "Severe cyclonic barometric gradient. Danger of structural and tree damage."
+                                conf = 92
+                            elif wind >= 40.0:
+                                severity = "Orange Alert"
+                                tier = "ORANGE"
+                                cat = "Squally Wind Alert"
+                                cause = "Strong pressure gradient flow. Hazardous for open transport and marine activity."
+                                conf = 88
+                            else:
+                                severity = "Yellow Advisory"
+                                tier = "YELLOW"
+                                cat = "Gusty Wind Advisory"
+                                cause = "Moderate localized wind gusts impacting light infrastructure."
+                                conf = 82
+
+                            evaluated_alerts.append({
+                                "alert_id": f"ALT-WIND-{spot['name'][:4].upper()}",
+                                "region": spot["name"],
+                                "subdivision": spot["sub"],
+                                "category": cat,
+                                "severity": severity,
+                                "tier": tier,
+                                "lead_time": "Lead T+12h Horizon",
+                                "observed_value": round(wind, 1),
+                                "threshold_value": 25.0,
+                                "unit": "km/h",
+                                "confidence": conf,
+                                "latitude": spot["lat"],
+                                "longitude": spot["lon"],
+                                "issued_at": now_str,
+                                "synoptic_cause": cause
+                            })
+
+                        # ---------------- 3. MULTI-TIER THERMAL REGIMES ----------------
+                        if temp >= 38.0:
+                            if temp >= 45.0:
+                                severity = "Red Alert"
+                                tier = "RED"
+                                cat = "Severe Heatwave"
+                                conf = 94
+                            elif temp >= 42.0:
+                                severity = "Orange Alert"
+                                tier = "ORANGE"
+                                cat = "Heat Wave Alert"
+                                conf = 89
+                            else:
+                                severity = "Yellow Advisory"
+                                tier = "YELLOW"
+                                cat = "Heat Advisory"
+                                conf = 84
+
                             evaluated_alerts.append({
                                 "alert_id": f"ALT-HEAT-{spot['name'][:4].upper()}",
                                 "region": spot["name"],
                                 "subdivision": spot["sub"],
-                                "category": "Heat Wave",
-                                "severity": "Red Alert" if is_red else "Orange Alert",
+                                "category": cat,
+                                "severity": severity,
+                                "tier": tier,
                                 "lead_time": "Lead T+48h Horizon",
                                 "observed_value": round(temp, 1),
-                                "threshold_value": 40.0,
+                                "threshold_value": 38.0,
                                 "unit": "°C",
-                                "confidence": 88,
+                                "confidence": conf,
                                 "latitude": spot["lat"],
                                 "longitude": spot["lon"],
                                 "issued_at": now_str,
-                                "synoptic_cause": "Severe dry boundary layer subsidence and solar heating."
+                                "synoptic_cause": "Dry boundary layer subsidence and intense diurnal solar radiation."
                             })
 
-                        # 3. Cold Wave (<= 5.0 °C)
-                        if temp <= 5.0:
-                            is_red = temp <= 2.0
+                        elif temp <= 8.0:
+                            if temp <= 3.0:
+                                severity = "Red Alert"
+                                tier = "RED"
+                                cat = "Severe Cold Wave"
+                                conf = 93
+                            else:
+                                severity = "Yellow Advisory"
+                                tier = "YELLOW"
+                                cat = "Cold Wave Advisory"
+                                conf = 87
+
                             evaluated_alerts.append({
                                 "alert_id": f"ALT-COLD-{spot['name'][:4].upper()}",
                                 "region": spot["name"],
                                 "subdivision": spot["sub"],
-                                "category": "Cold Wave",
-                                "severity": "Red Alert" if is_red else "Yellow Warning",
+                                "category": cat,
+                                "severity": severity,
+                                "tier": tier,
                                 "lead_time": "Lead T+24h Horizon",
                                 "observed_value": round(temp, 1),
-                                "threshold_value": 5.0,
+                                "threshold_value": 8.0,
                                 "unit": "°C",
-                                "confidence": 91,
+                                "confidence": conf,
                                 "latitude": spot["lat"],
                                 "longitude": spot["lon"],
                                 "issued_at": now_str,
                                 "synoptic_cause": "Steep katabatic drainage and high-altitude radiative thermal loss."
                             })
 
-                        # 4. Gale Wind (>= 45 km/h)
-                        if wind >= 45.0:
-                            is_red = wind >= 65.0
-                            evaluated_alerts.append({
-                                "alert_id": f"ALT-WIND-{spot['name'][:4].upper()}",
-                                "region": spot["name"],
-                                "subdivision": spot["sub"],
-                                "category": "Gale Wind",
-                                "severity": "Red Alert" if is_red else "Yellow Warning",
-                                "lead_time": "Lead T+12h Horizon",
-                                "observed_value": round(wind, 1),
-                                "threshold_value": 45.0,
-                                "unit": "km/h",
-                                "confidence": 83,
-                                "latitude": spot["lat"],
-                                "longitude": spot["lon"],
-                                "issued_at": now_str,
-                                "synoptic_cause": "Severe horizontal surface barometric gradient."
-                            })
                     except Exception as parse_err:
                         logger.warning(f"Failed parsing station {spot['name']}: {parse_err}")
 
-                # Rate-limiting inter-batch sleep
                 await asyncio.sleep(1.5)
 
         self.cached_alerts = evaluated_alerts
