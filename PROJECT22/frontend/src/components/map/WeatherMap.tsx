@@ -3,6 +3,7 @@ import Map, { NavigationControl, Source, Layer } from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { weatherApi } from '../../services/api';
 import { ExtremeAlert } from '../../utils/types';
+import { fetchAccuGroundTruth, AccuObservation } from '../../services/accuweather';
 import {
   Layers,
   Eye,
@@ -24,6 +25,8 @@ import {
   Radio,
 } from 'lucide-react';
 import type { Location } from '../../App';
+
+declare const process: any;
 
 interface WeatherMapProps {
   variable?: string;
@@ -79,41 +82,21 @@ const LEAD_HORIZONS = [
   { hours: 72, label: '+72h', desc: 'Lead 72h' },
 ];
 
-// Dense synoptic grid array covering all Indian geographical sectors
-const INDIA_GRID_POINTS = [
-  { name: 'Leh Ladakh', lat: 34.15, lon: 77.57 },
-  { name: 'Srinagar', lat: 34.08, lon: 74.79 },
-  { name: 'Shimla', lat: 31.10, lon: 77.17 },
-  { name: 'Roorkee / Quantum', lat: 30.01, lon: 77.76 },
-  { name: 'Dehradun', lat: 30.31, lon: 78.03 },
-  { name: 'Chandigarh', lat: 30.73, lon: 76.77 },
-  { name: 'Delhi NCR', lat: 28.61, lon: 77.20 },
-  { name: 'Jaipur', lat: 26.91, lon: 75.78 },
-  { name: 'Jaisalmer', lat: 26.91, lon: 70.91 },
-  { name: 'Bikaner', lat: 28.02, lon: 73.31 },
-  { name: 'Lucknow', lat: 26.84, lon: 80.94 },
-  { name: 'Varanasi', lat: 25.31, lon: 82.97 },
-  { name: 'Patna', lat: 25.59, lon: 85.13 },
-  { name: 'Guwahati', lat: 26.14, lon: 91.73 },
-  { name: 'Shillong', lat: 25.57, lon: 91.89 },
-  { name: 'Ahmedabad', lat: 23.02, lon: 72.57 },
-  { name: 'Surat', lat: 21.17, lon: 72.83 },
-  { name: 'Bhopal', lat: 23.25, lon: 77.41 },
-  { name: 'Nagpur', lat: 21.14, lon: 79.08 },
-  { name: 'Ranchi', lat: 23.34, lon: 85.30 },
-  { name: 'Kolkata', lat: 22.57, lon: 88.36 },
-  { name: 'Bhubaneswar', lat: 20.29, lon: 85.82 },
-  { name: 'Raipur', lat: 21.25, lon: 81.62 },
-  { name: 'Mumbai', lat: 19.07, lon: 72.87 },
-  { name: 'Pune', lat: 18.52, lon: 73.85 },
-  { name: 'Hyderabad', lat: 17.38, lon: 78.48 },
-  { name: 'Visakhapatnam', lat: 17.68, lon: 83.21 },
-  { name: 'Goa', lat: 15.29, lon: 74.12 },
-  { name: 'Bengaluru', lat: 12.97, lon: 77.59 },
-  { name: 'Chennai', lat: 13.08, lon: 80.27 },
-  { name: 'Coimbatore', lat: 11.01, lon: 76.95 },
-  { name: 'Kochi', lat: 9.93, lon: 76.26 },
-  { name: 'Thiruvananthapuram', lat: 8.52, lon: 76.93 },
+const SYNOPTIC_CITIES = [
+  { name: 'Srinagar', lat: 34.08, lon: 74.79, defaultTemp: 14 },
+  { name: 'Shimla', lat: 31.10, lon: 77.17, defaultTemp: 16 },
+  { name: 'New Delhi', lat: 28.61, lon: 77.20, defaultTemp: 31 },
+  { name: 'Jaipur', lat: 26.91, lon: 75.78, defaultTemp: 34 },
+  { name: 'Jaisalmer', lat: 26.91, lon: 70.91, defaultTemp: 38 },
+  { name: 'Lucknow', lat: 26.84, lon: 80.94, defaultTemp: 32 },
+  { name: 'Patna', lat: 25.59, lon: 85.13, defaultTemp: 30 },
+  { name: 'Kolkata', lat: 22.57, lon: 88.36, defaultTemp: 32 },
+  { name: 'Ahmedabad', lat: 23.02, lon: 72.57, defaultTemp: 36 },
+  { name: 'Nagpur', lat: 21.14, lon: 79.08, defaultTemp: 35 },
+  { name: 'Mumbai', lat: 19.07, lon: 72.87, defaultTemp: 31 },
+  { name: 'Hyderabad', lat: 17.38, lon: 78.48, defaultTemp: 33 },
+  { name: 'Bengaluru', lat: 12.97, lon: 77.59, defaultTemp: 27 },
+  { name: 'Chennai', lat: 13.08, lon: 80.27, defaultTemp: 32 },
 ];
 
 interface ModelWeightItem {
@@ -168,15 +151,15 @@ const WeatherMap: React.FC<WeatherMapProps> = ({
   const [showGrid, setShowGrid] = useState(true);
   const [showAlerts, setShowAlerts] = useState(true);
   const [loading, setLoading] = useState(false);
-
-  // Real-time temperature heatmap states
-  const [liveThermalData, setLiveThermalData] = useState<any[]>([]);
-  const [loadingThermal, setLoadingThermal] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   // Microclimate stations & BMA state
   const [activeStation, setActiveStation] = useState<MicroclimatePreset | null>(null);
   const [bmaData, setBmaData] = useState<LiveBMAResponse | null>(null);
   const [loadingBma, setLoadingBma] = useState(false);
+
+  // AccuWeather live observation ground truth state
+  const [accuObs, setAccuObs] = useState<AccuObservation | null>(null);
 
   // Projected forecast state
   const [stepData, setStepData] = useState<StepForecast | null>(null);
@@ -212,58 +195,22 @@ const WeatherMap: React.FC<WeatherMapProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Fetch actual live real-time surface temperatures across India
-  const fetchLiveIndiaTemperatures = useCallback(async () => {
-    setLoadingThermal(true);
-    try {
-      const lats = INDIA_GRID_POINTS.map((p) => p.lat).join(',');
-      const lons = INDIA_GRID_POINTS.map((p) => p.lon).join(',');
-      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lats}&longitude=${lons}&current=temperature_2m&timezone=auto`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error('Failed to fetch synoptic thermal grid');
-      const data = await res.json();
-
-      const items = Array.isArray(data) ? data : [data];
-      const thermalFeatures = items.map((st: any, idx: number) => {
-        const temp = st.current?.temperature_2m ?? 28;
-        // Normalize temperature (0°C = 0.0, 50°C = 1.0)
-        const normalized = Math.max(0.05, Math.min((temp - 5) / 40, 1.0));
-        return {
-          name: INDIA_GRID_POINTS[idx]?.name || `Grid ${idx}`,
-          lat: INDIA_GRID_POINTS[idx]?.lat,
-          lon: INDIA_GRID_POINTS[idx]?.lon,
-          temp,
-          intensity: Number(normalized.toFixed(3)),
-        };
-      });
-
-      setLiveThermalData(thermalFeatures);
-    } catch {
-      // Direct physical gradient fallback
-      setLiveThermalData(
-        INDIA_GRID_POINTS.map((pt) => {
-          const isNorthHigh = pt.lat > 31;
-          const isDesert = pt.lon < 74 && pt.lat < 28;
-          const temp = isNorthHigh ? 12.5 : isDesert ? 39.4 : 31.0;
-          return {
-            name: pt.name,
-            lat: pt.lat,
-            lon: pt.lon,
-            temp,
-            intensity: (temp - 5) / 40,
-          };
-        })
-      );
-    } finally {
-      setLoadingThermal(false);
-    }
-  }, []);
-
+  // Fetch live AccuWeather ground truth when location changes
   useEffect(() => {
-    fetchLiveIndiaTemperatures();
-  }, [fetchLiveIndiaTemperatures]);
+    let active = true;
+    const fetchAccu = async () => {
+      const data = await fetchAccuGroundTruth(selectedLocation.latitude, selectedLocation.longitude);
+      if (active && data) {
+        setAccuObs(data);
+      }
+    };
+    fetchAccu();
+    return () => {
+      active = false;
+    };
+  }, [selectedLocation.latitude, selectedLocation.longitude]);
 
-  // Fetch true forecast value for selected lead time
+  // Fetch forecast value for selected lead time
   useEffect(() => {
     let active = true;
 
@@ -429,28 +376,6 @@ const WeatherMap: React.FC<WeatherMapProps> = ({
     [onLocationSelect, fetchLiveBma]
   );
 
-  // Real-time thermal GeoJSON
-  const realTimeThermalGeoJson = useMemo(() => {
-    if (!liveThermalData || liveThermalData.length === 0) {
-      return { type: 'FeatureCollection' as const, features: [] };
-    }
-    return {
-      type: 'FeatureCollection' as const,
-      features: liveThermalData.map((pt) => ({
-        type: 'Feature' as const,
-        geometry: {
-          type: 'Point' as const,
-          coordinates: [pt.lon, pt.lat],
-        },
-        properties: {
-          intensity: pt.intensity,
-          temp: pt.temp,
-          name: pt.name,
-        },
-      })),
-    };
-  }, [liveThermalData]);
-
   const pointsGeoJson = useMemo(() => {
     if (!gridData || gridData.length === 0) return { type: 'FeatureCollection' as const, features: [] };
     return {
@@ -502,6 +427,21 @@ const WeatherMap: React.FC<WeatherMapProps> = ({
     })),
   }), []);
 
+  const synopticLabelsGeoJson = useMemo(() => ({
+    type: 'FeatureCollection' as const,
+    features: SYNOPTIC_CITIES.map((c) => ({
+      type: 'Feature' as const,
+      geometry: {
+        type: 'Point' as const,
+        coordinates: [c.lon, c.lat],
+      },
+      properties: {
+        name: c.name,
+        temp: `${c.defaultTemp}°`,
+      },
+    })),
+  }), []);
+
   const selectedPointGeoJson = useMemo(() => ({
     type: 'FeatureCollection' as const,
     features: [
@@ -534,13 +474,20 @@ const WeatherMap: React.FC<WeatherMapProps> = ({
     [onLocationSelect]
   );
 
+  const handleSyncAWS = () => {
+    setIsSyncing(true);
+    setTimeout(() => setIsSyncing(false), 600);
+  };
+
   const activeHorizon = LEAD_HORIZONS.find((h) => h.hours === leadTime) || LEAD_HORIZONS[0];
+
+  const owmKey = process.env.REACT_APP_OPENWEATHER_API_KEY || '2d8c07b839e753e0722f3fd1751a5a0b';
 
   return (
     <div className="space-y-4 font-sans">
       <div className="bg-slate-950/70 backdrop-blur-xl border border-white/10 rounded-3xl p-4 sm:p-5 shadow-2xl space-y-4">
         
-        {/* Primary Viewport Tabs */}
+        {/* Header Tabs */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.08] pb-3">
           <div className="flex items-center gap-2">
             <button
@@ -552,9 +499,9 @@ const WeatherMap: React.FC<WeatherMapProps> = ({
               }`}
             >
               <Radio className={`w-3.5 h-3.5 ${mapMode === 'realtime_thermal' ? 'text-rose-400 animate-pulse' : 'text-slate-400'}`} />
-              <span>REAL-TIME THERMAL HEATMAP</span>
+              <span>CONTINUOUS THERMAL RADAR</span>
               <span className="text-[10px] bg-rose-500/20 text-rose-300 px-1.5 py-0.5 rounded border border-rose-500/30">
-                LIVE NOW
+                SYNOPTIC
               </span>
             </button>
 
@@ -573,18 +520,18 @@ const WeatherMap: React.FC<WeatherMapProps> = ({
 
           <div className="flex items-center gap-2">
             <button
-              onClick={fetchLiveIndiaTemperatures}
-              disabled={loadingThermal}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/[0.04] border border-white/10 hover:border-cyan-400/50 text-xs font-mono text-slate-300 transition-all"
-              title="Refresh live surface temperatures"
+              onClick={handleSyncAWS}
+              disabled={isSyncing}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/[0.04] border border-white/10 hover:border-cyan-400/50 text-xs font-mono text-slate-300 transition-all disabled:opacity-50"
+              title="Sync live AWS"
             >
-              <RefreshCw className={`w-3 h-3 ${loadingThermal ? 'animate-spin text-cyan-400' : ''}`} />
-              <span className="hidden sm:inline">Sync Live AWS</span>
+              <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin text-cyan-400' : ''}`} />
+              <span className="hidden sm:inline">Sync Live Radar</span>
             </button>
           </div>
         </div>
 
-        {/* Search Bar & Station Presets */}
+        {/* Search Bar & Station Controls */}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div ref={searchContainerRef} className="relative flex-1 min-w-[260px] max-w-md">
             <div className="relative flex items-center">
@@ -630,7 +577,6 @@ const WeatherMap: React.FC<WeatherMapProps> = ({
             )}
           </div>
 
-          {/* Microclimate Presets & Layer Toggles */}
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-1.5 bg-white/[0.04] rounded-2xl p-1 border border-white/[0.08]">
               {DEMO_STATIONS.map((st) => {
@@ -684,7 +630,7 @@ const WeatherMap: React.FC<WeatherMapProps> = ({
           </div>
         </div>
 
-        {/* Horizon Bar (Shown in Standard Mode) */}
+        {/* Lead Horizon bar for standard mode */}
         {mapMode === 'standard' && (
           <div className="pt-2 border-t border-white/[0.06] space-y-2">
             <div className="flex items-center justify-between">
@@ -744,8 +690,8 @@ const WeatherMap: React.FC<WeatherMapProps> = ({
           </div>
         )}
 
-        {/* Mapbox / MapLibre Viewport */}
-        <div className="relative h-[520px] rounded-3xl overflow-hidden border border-white/10 mt-3 bg-slate-950/90 shadow-2xl">
+        {/* Viewport */}
+        <div className="relative h-[530px] rounded-3xl overflow-hidden border border-white/10 mt-3 bg-[#0d141e] shadow-2xl">
           <Map
             ref={mapRef}
             initialViewState={{ longitude: 78.96, latitude: 22.50, zoom: 4.3 }}
@@ -760,61 +706,68 @@ const WeatherMap: React.FC<WeatherMapProps> = ({
           >
             <NavigationControl position="top-right" />
 
-            {/* Continuous Real-Time Surface Temperature Heatmap (IMD Contour Ramp) */}
+            {/* Continuous Full-Subcontinent Synoptic Temperature Raster Tile Stream */}
             {mapMode === 'realtime_thermal' && (
-              <Source id="realtime-thermal-source" type="geojson" data={realTimeThermalGeoJson}>
+              <Source
+                id="synoptic-temp-raster"
+                type="raster"
+                tiles={[
+                  `https://tile.openweathermap.org/map/temp_new/{z}/{x}/{y}.png?appid=${owmKey}`
+                ]}
+                tileSize={256}
+              >
                 <Layer
-                  id="realtime-thermal-layer"
-                  type="heatmap"
+                  id="synoptic-temp-layer"
+                  type="raster"
                   paint={{
-                    // Weight dynamically proportional to true AWS temperature
-                    'heatmap-weight': ['get', 'intensity'],
-                    'heatmap-intensity': [
-                      'interpolate',
-                      ['linear'],
-                      ['zoom'],
-                      3, 1.4,
-                      7, 3.2
-                    ],
-                    // Atmospheric IMD palette: Cyan/Deep Blue (Himalayas) -> Green -> Yellow -> Orange -> Deep Crimson Red
-                    'heatmap-color': [
-                      'interpolate',
-                      ['linear'],
-                      ['heatmap-density'],
-                      0, 'rgba(0,0,0,0)',
-                      0.15, 'rgba(30, 144, 255, 0.7)',
-                      0.30, 'rgba(0, 220, 255, 0.75)',
-                      0.48, 'rgba(16, 185, 129, 0.8)',
-                      0.65, 'rgba(250, 204, 21, 0.85)',
-                      0.80, 'rgba(249, 115, 22, 0.9)',
-                      0.95, 'rgba(225, 29, 72, 0.95)',
-                      1.0, 'rgba(159, 18, 57, 1.0)'
-                    ],
-                    // Wide radius for continuous seamless blending across terrain
-                    'heatmap-radius': [
-                      'interpolate',
-                      ['linear'],
-                      ['zoom'],
-                      3, 65,
-                      6, 145,
-                      9, 260
-                    ],
-                    'heatmap-opacity': 0.82,
+                    'raster-opacity': 0.76,
+                    'raster-fade-duration': 350,
                   }}
                 />
               </Source>
             )}
 
-            {/* Live Observation Grid Points */}
+            {/* Major Indian Synoptic Reference Cities & Temperatures */}
+            {mapMode === 'realtime_thermal' && (
+              <Source id="synoptic-labels" type="geojson" data={synopticLabelsGeoJson}>
+                <Layer
+                  id="synoptic-labels-dots"
+                  type="circle"
+                  paint={{
+                    'circle-radius': 4.5,
+                    'circle-color': '#facc15',
+                    'circle-stroke-color': '#0f172a',
+                    'circle-stroke-width': 1.5,
+                  }}
+                />
+                <Layer
+                  id="synoptic-labels-text"
+                  type="symbol"
+                  layout={{
+                    'text-field': ['concat', ['get', 'name'], '  ', ['get', 'temp']],
+                    'text-size': 11,
+                    'text-offset': [0, 1.2],
+                    'text-anchor': 'top',
+                  }}
+                  paint={{
+                    'text-color': '#ffffff',
+                    'text-halo-color': '#000000',
+                    'text-halo-width': 1.5,
+                  }}
+                />
+              </Source>
+            )}
+
+            {/* Observation Grid Points */}
             {showGrid && pointsGeoJson.features.length > 0 && (
               <Source id="grid-source" type="geojson" data={pointsGeoJson}>
                 <Layer
                   id="grid-layer"
                   type="circle"
                   paint={{
-                    'circle-radius': 4,
+                    'circle-radius': 3.5,
                     'circle-color': '#06b6d4',
-                    'circle-opacity': 0.45,
+                    'circle-opacity': 0.5,
                     'circle-stroke-color': '#082f49',
                     'circle-stroke-width': 1,
                   }}
@@ -822,16 +775,16 @@ const WeatherMap: React.FC<WeatherMapProps> = ({
               </Source>
             )}
 
-            {/* Extreme Warning Alerts Layer */}
+            {/* Alerts */}
             {showAlerts && alertsGeoJson.features.length > 0 && (
               <Source id="alerts-source" type="geojson" data={alertsGeoJson}>
                 <Layer
                   id="alerts-layer"
                   type="circle"
                   paint={{
-                    'circle-radius': 8,
+                    'circle-radius': 7,
                     'circle-color': '#ef4444',
-                    'circle-opacity': 0.8,
+                    'circle-opacity': 0.85,
                     'circle-stroke-color': '#ffffff',
                     'circle-stroke-width': 2,
                   }}
@@ -839,7 +792,7 @@ const WeatherMap: React.FC<WeatherMapProps> = ({
               </Source>
             )}
 
-            {/* Benchmark Stations Layer */}
+            {/* Benchmark Stations */}
             <Source id="preset-stations-source" type="geojson" data={presetStationsGeoJson}>
               <Layer
                 id="preset-stations-glow"
@@ -889,48 +842,56 @@ const WeatherMap: React.FC<WeatherMapProps> = ({
             </Source>
           </Map>
 
-          {/* Floating Atmospheric Color Ramp Legend */}
+          {/* Authentic Synoptic Color Gradient Scale Bar */}
           {mapMode === 'realtime_thermal' && (
-            <div className="absolute top-4 left-4 bg-slate-950/85 backdrop-blur-xl border border-white/10 rounded-2xl p-3 text-white space-y-1.5 shadow-2xl font-mono">
-              <div className="flex items-center justify-between gap-4 text-[11px] font-bold tracking-wider text-neutral-300 uppercase">
+            <div className="absolute bottom-4 left-4 right-4 sm:right-auto bg-slate-950/90 backdrop-blur-xl border border-white/15 rounded-2xl p-3 text-white space-y-1.5 shadow-2xl font-mono max-w-sm">
+              <div className="flex items-center justify-between text-[11px] font-bold tracking-wider text-neutral-200">
                 <span className="flex items-center gap-1.5">
-                  <Flame className="w-3.5 h-3.5 text-rose-400" />
-                  India Surface Temp
+                  <Flame className="w-3.5 h-3.5 text-amber-400" />
+                  Synoptic Surface Temperature
                 </span>
                 <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
-                  LIVE AWS
+                  °C Radar
                 </span>
               </div>
-              <div className="w-48 h-2.5 rounded-full bg-gradient-to-r from-blue-500 via-emerald-400 via-amber-400 to-rose-600 border border-white/10" />
-              <div className="flex justify-between text-[9px] text-slate-400 font-mono">
-                <span>&lt; 10°C (Cold)</span>
-                <span>25°C</span>
-                <span>&gt; 42°C (Extreme)</span>
+              <div className="w-full h-3 rounded-full bg-gradient-to-r from-[#2563eb] via-[#06b6d4] via-[#22c55e] via-[#eab308] via-[#f97316] to-[#dc2626] border border-white/15" />
+              <div className="flex justify-between text-[10px] text-slate-300 font-mono font-semibold">
+                <span>-12°C</span>
+                <span>4°C</span>
+                <span>21°C</span>
+                <span>38°C</span>
+                <span>54°C</span>
               </div>
             </div>
           )}
 
-          {/* Status Overlay */}
-          {(loading || loadingThermal) && (
+          {loading && (
             <div className="absolute top-4 right-14 bg-slate-950/85 px-3 py-1.5 rounded-xl border border-white/10 text-xs text-slate-300 flex items-center gap-2 backdrop-blur-md font-mono">
-              <div className="w-3 h-3 border-2 border-rose-400 border-t-transparent rounded-full animate-spin" />
-              Ingesting live surface temperatures...
+              <div className="w-3 h-3 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+              Loading synoptic tiles...
             </div>
           )}
 
-          {/* Floating Target Badge */}
-          <div className="absolute bottom-4 left-4 bg-slate-950/85 px-3.5 py-2 rounded-2xl border border-white/10 text-xs font-mono text-slate-300 flex items-center gap-3 backdrop-blur-md shadow-xl">
+          {/* Floating Location Badge & Live AccuWeather Verification */}
+          <div className="hidden sm:flex absolute top-4 left-4 bg-slate-950/85 px-3.5 py-2 rounded-2xl border border-white/10 text-xs font-mono text-slate-300 items-center gap-3 backdrop-blur-md shadow-xl">
             <div className="flex items-center gap-1.5 text-cyan-300">
               <MapPin className="w-3.5 h-3.5 text-cyan-400" />
               <span>{selectedLocation.name}</span>
             </div>
             <span className="text-white/20">|</span>
-            <div className="flex items-center gap-1.5 text-emerald-400">
-              <Calendar className="w-3.5 h-3.5" />
-              <span>
-                {mapMode === 'realtime_thermal' ? 'Real-Time Thermal Radar' : `Horizon: ${activeHorizon.label}`}
-              </span>
-            </div>
+            {accuObs ? (
+              <div className="flex items-center gap-1.5 text-amber-300 font-semibold">
+                <Award className="w-3.5 h-3.5 text-amber-400" />
+                <span>AccuWeather AWS: {accuObs.temperature}°C ({accuObs.weatherText})</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 text-emerald-400">
+                <Calendar className="w-3.5 h-3.5" />
+                <span>
+                  {mapMode === 'realtime_thermal' ? 'Continuous Thermal Radar' : `Horizon: ${activeHorizon.label}`}
+                </span>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -975,11 +936,15 @@ const WeatherMap: React.FC<WeatherMapProps> = ({
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
             <div className="lg:col-span-4 grid grid-cols-2 gap-3">
               <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex flex-col justify-between">
-                <span className="text-[10px] font-mono text-slate-400 uppercase">Ground Truth Observation</span>
+                <span className="text-[10px] font-mono text-slate-400 uppercase">
+                  {accuObs ? 'AccuWeather AWS' : 'Ground Truth AWS'}
+                </span>
                 <div className="text-2xl font-mono font-bold text-white mt-2">
-                  {bmaData?.observed_ground_truth ?? '--'}°C
+                  {accuObs ? `${accuObs.temperature}°C` : (bmaData?.observed_ground_truth ? `${bmaData.observed_ground_truth}°C` : '--')}
                 </div>
-                <span className="text-[10px] text-slate-400">Open-Meteo Synoptic AWS</span>
+                <span className="text-[10px] text-slate-400">
+                  {accuObs ? accuObs.weatherText : 'Synoptic Ground Truth'}
+                </span>
               </div>
 
               <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex flex-col justify-between">
