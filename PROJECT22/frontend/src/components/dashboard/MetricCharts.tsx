@@ -10,8 +10,8 @@ export const MetricCharts: React.FC<MetricChartsProps> = ({ variable }) => {
   
   // Comparative RMSE error benchmarks (Lower is better)
   const rmseData = [
-    { model: 'NCUM-Global', scores: [1.42, 1.68, 2.15, 2.85, 3.42, 4.10], color: 'bg-cyan-500' },
-    { model: 'NEPS-Regional', scores: [1.35, 1.55, 1.98, 2.70, 3.25, 3.95], color: 'bg-indigo-400' },
+    { model: 'GFS Seamless (NOAA)', scores: [1.45, 1.72, 2.18, 2.90, 3.48, 4.15], color: 'bg-cyan-500' },
+    { model: 'ICON (DWD)', scores: [1.40, 1.65, 2.08, 2.80, 3.35, 4.05], color: 'bg-indigo-400' },
     { model: 'ECMWF IFS', scores: [1.38, 1.60, 2.05, 2.75, 3.30, 4.02], color: 'bg-amber-400' },
     { model: 'ATMOS AI Blended', scores: [1.12, 1.28, 1.62, 2.18, 2.74, 3.35], color: 'bg-emerald-400', highlight: true },
   ];
