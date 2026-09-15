@@ -116,6 +116,22 @@ interface GeocodingResult {
   country?: string;
 }
 
+// Synoptic grid centroids across Indian agro-climatic zones
+const SYNOPTIC_HEAT_POINTS = [
+  { name: 'Delhi NCR', lon: 77.2090, lat: 28.6139, baseIntensity: 0.85 },
+  { name: 'Jaisalmer (Thar)', lon: 70.9160, lat: 26.9157, baseIntensity: 0.96 },
+  { name: 'Quantum (Roorkee)', lon: 77.7600, lat: 30.0100, baseIntensity: 0.74 },
+  { name: 'Mumbai Coast', lon: 72.8777, lat: 19.0760, baseIntensity: 0.88 },
+  { name: 'Kolkata Delta', lon: 88.3639, lat: 22.5726, baseIntensity: 0.82 },
+  { name: 'Bengaluru Plateau', lon: 77.5946, lat: 12.9716, baseIntensity: 0.62 },
+  { name: 'Hyderabad Deccan', lon: 78.4867, lat: 17.3850, baseIntensity: 0.78 },
+  { name: 'Chennai Coastal', lon: 80.2707, lat: 13.0827, baseIntensity: 0.84 },
+  { name: 'Nagpur Central', lon: 79.0882, lat: 21.1458, baseIntensity: 0.89 },
+  { name: 'Ahmedabad Plain', lon: 72.5714, lat: 23.0225, baseIntensity: 0.91 },
+  { name: 'Guwahati Valley', lon: 91.7362, lat: 26.1445, baseIntensity: 0.76 },
+  { name: 'Srinagar Basin', lon: 74.7973, lat: 34.0837, baseIntensity: 0.52 },
+];
+
 const WeatherMap: React.FC<WeatherMapProps> = ({
   variable = 'precipitation',
   leadTime,
@@ -129,6 +145,7 @@ const WeatherMap: React.FC<WeatherMapProps> = ({
   const [alerts, setAlerts] = useState<ExtremeAlert[]>([]);
   const [showGrid, setShowGrid] = useState(true);
   const [showAlerts, setShowAlerts] = useState(true);
+  const [showHeatmap, setShowHeatmap] = useState(true);
   const [loading, setLoading] = useState(false);
 
   // Microclimate stations & BMA state
@@ -173,7 +190,7 @@ const WeatherMap: React.FC<WeatherMapProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Fetch true forecast value for the chosen lead time (0h to 72h)
+  // Fetch forecast value for the chosen lead time (0h to 72h)
   useEffect(() => {
     let active = true;
 
@@ -306,7 +323,7 @@ const WeatherMap: React.FC<WeatherMapProps> = ({
     try {
       setLoadingBma(true);
       const res = await fetch(
-        `http://localhost:8000/api/v1/forecast/live-bma?lat=${station.lat}&lon=${station.lon}&variable=temperature_2m`
+        `https://atmos-te62.onrender.com/api/v1/forecast/live-bma?lat=${station.lat}&lon=${station.lon}&variable=temperature_2m`
       );
       if (!res.ok) throw new Error('Failed to fetch live BMA data');
       const data = await res.json();
@@ -343,6 +360,34 @@ const WeatherMap: React.FC<WeatherMapProps> = ({
     },
     [onLocationSelect, fetchLiveBma]
   );
+
+  // Dynamic GeoJSON Heatmap layer that updates on lead-time switch
+  const heatmapGeoJson = useMemo(() => {
+    const horizonMultiplier = 1 + (leadTime / 72) * 0.45;
+    const tempInfluence = stepData ? (stepData.temperature - 20) / 25 : 0.5;
+
+    return {
+      type: 'FeatureCollection' as const,
+      features: SYNOPTIC_HEAT_POINTS.map((pt) => {
+        const calculatedIntensity = Math.min(
+          Math.max(pt.baseIntensity * horizonMultiplier * (0.8 + tempInfluence * 0.4), 0.1),
+          1.0
+        );
+
+        return {
+          type: 'Feature' as const,
+          geometry: {
+            type: 'Point' as const,
+            coordinates: [pt.lon, pt.lat],
+          },
+          properties: {
+            intensity: calculatedIntensity,
+            name: pt.name,
+          },
+        };
+      }),
+    };
+  }, [leadTime, stepData]);
 
   const pointsGeoJson = useMemo(() => {
     if (!gridData || gridData.length === 0) return { type: 'FeatureCollection' as const, features: [] };
@@ -509,6 +554,20 @@ const WeatherMap: React.FC<WeatherMapProps> = ({
               })}
             </div>
 
+            {/* Heatmap Toggle Button */}
+            <button
+              onClick={() => setShowHeatmap(!showHeatmap)}
+              title="Toggle Thermal Heatmap Layer"
+              className={`p-2 rounded-xl transition-all border ${
+                showHeatmap
+                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-sm'
+                  : 'bg-white/[0.03] text-slate-400 border-white/[0.08]'
+              }`}
+            >
+              <Flame className="w-4 h-4" />
+            </button>
+
+            {/* Grid Toggle */}
             <button
               onClick={() => setShowGrid(!showGrid)}
               title="Toggle Grid Points"
@@ -520,6 +579,8 @@ const WeatherMap: React.FC<WeatherMapProps> = ({
             >
               {showGrid ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
             </button>
+
+            {/* Alerts Toggle */}
             <button
               onClick={() => setShowAlerts(!showAlerts)}
               title="Toggle Convective Alerts"
@@ -608,6 +669,44 @@ const WeatherMap: React.FC<WeatherMapProps> = ({
             renderWorldCopies={false}
           >
             <NavigationControl position="top-right" />
+
+            {/* Dynamic Synoptic Atmospheric Heatmap Layer */}
+            {showHeatmap && (
+              <Source id="synoptic-heat-source" type="geojson" data={heatmapGeoJson}>
+                <Layer
+                  id="synoptic-heatmap"
+                  type="heatmap"
+                  paint={{
+                    'heatmap-weight': ['get', 'intensity'],
+                    'heatmap-intensity': [
+                      'interpolate',
+                      ['linear'],
+                      ['zoom'],
+                      3, 1,
+                      9, 3
+                    ],
+                    'heatmap-color': [
+                      'interpolate',
+                      ['linear'],
+                      ['heatmap-density'],
+                      0, 'rgba(0,0,0,0)',
+                      0.2, 'rgba(6, 182, 212, 0.4)',
+                      0.4, 'rgba(16, 185, 129, 0.6)',
+                      0.65, 'rgba(245, 158, 11, 0.75)',
+                      1, 'rgba(239, 68, 68, 0.85)'
+                    ],
+                    'heatmap-radius': [
+                      'interpolate',
+                      ['linear'],
+                      ['zoom'],
+                      3, 40,
+                      8, 110
+                    ],
+                    'heatmap-opacity': 0.75,
+                  }}
+                />
+              </Source>
+            )}
 
             {/* Live Observation Grid Points */}
             {showGrid && pointsGeoJson.features.length > 0 && (
