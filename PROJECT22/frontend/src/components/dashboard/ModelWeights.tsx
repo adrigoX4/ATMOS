@@ -1,11 +1,16 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Database, RefreshCw, CheckCircle2, Flame, Layers } from 'lucide-react';
-import { Location } from '../../App';
+import { Database, RefreshCw, CheckCircle2, Flame } from 'lucide-react';
+
+interface LocationType {
+  name?: string;
+  latitude?: number;
+  longitude?: number;
+}
 
 interface ModelWeightsProps {
   variable?: string;
   leadTime?: number;
-  location?: Location;
+  location?: LocationType;
   weatherCode?: number;
 }
 
@@ -38,22 +43,20 @@ export const ModelWeights: React.FC<ModelWeightsProps> = ({
   const [regime, setRegime] = useState<string>('Synoptic Normal');
   const [heatmapData, setHeatmapData] = useState<HeatmapRow[]>([]);
 
-  // Detect meteorological regime dynamically based on coordinates and hazards
   useEffect(() => {
     if (weatherCode >= 95) {
       setRegime('Severe Convective Squall');
     } else if (weatherCode >= 51 && weatherCode <= 67) {
       setRegime('Frontal Precipitation');
-    } else if (location && (location.longitude < 73 || (location.name && location.name.toLowerCase().includes('jaisalmer')))) {
+    } else if (location && (Number(location.longitude) < 73 || (location.name && location.name.toLowerCase().includes('jaisalmer')))) {
       setRegime('Arid Radiative Boundary');
-    } else if (location && location.latitude > 29) {
+    } else if (location && Number(location.latitude) > 29) {
       setRegime('Orographic Foothill Dynamic');
     } else {
       setRegime('Synoptic Normal');
     }
   }, [location, weatherCode]);
 
-  // Compute inverse-variance weights and lead-time heatmap
   const calculateWeights = useCallback(async () => {
     setLoading(true);
     const lat = location?.latitude ?? 28.61;
@@ -62,7 +65,6 @@ export const ModelWeights: React.FC<ModelWeightsProps> = ({
     let resolvedModels: ModelRow[] = [];
 
     try {
-      // Direct live Render backend ping
       const res = await fetch(
         `https://atmos-te62.onrender.com/api/v1/forecast/live-bma?lat=${lat}&lon=${lon}&variable=${variable}`
       );
@@ -87,10 +89,9 @@ export const ModelWeights: React.FC<ModelWeightsProps> = ({
         }
       }
     } catch {
-      // Network fallback
+      // Fallback gracefully
     }
 
-    // Mathematical microclimate weighting if backend response is unavailable
     if (resolvedModels.length === 0) {
       const isOrographic = lat > 29.5;
       const isArid = lon < 73.0;
@@ -147,7 +148,6 @@ export const ModelWeights: React.FC<ModelWeightsProps> = ({
 
     setModels(resolvedModels);
 
-    // Calculate lead-time heatmap steps based on active model variances
     const leads = ['T+6h', 'T+12h', 'T+24h', 'T+48h', 'T+72h'];
     const ecBase = resolvedModels.find((m) => m.id.includes('ecmwf'))?.variance ?? 0.5;
     const gfsBase = resolvedModels.find((m) => m.id.includes('gfs'))?.variance ?? 0.6;
@@ -179,7 +179,6 @@ export const ModelWeights: React.FC<ModelWeightsProps> = ({
 
   return (
     <div className="rounded-2xl bg-slate-950/35 backdrop-blur-2xl border border-white/[0.09] p-6 space-y-6 shadow-[0_8px_32px_rgba(0,0,0,0.25)]">
-      {/* Header Controls */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-white/[0.06]">
         <div>
           <div className="flex items-center gap-2.5">
@@ -221,7 +220,6 @@ export const ModelWeights: React.FC<ModelWeightsProps> = ({
         </div>
       </div>
 
-      {/* Dynamic Telemetry Model Table */}
       <div className="overflow-x-auto">
         <table className="w-full text-left font-mono text-xs">
           <thead>
@@ -281,7 +279,6 @@ export const ModelWeights: React.FC<ModelWeightsProps> = ({
         </table>
       </div>
 
-      {/* Real-Time Lead-Time Error Heatmap */}
       <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-4 space-y-3">
         <div className="flex items-center justify-between">
           <span className="text-xs font-semibold uppercase tracking-wider text-neutral-300 flex items-center gap-2 font-mono">
@@ -309,23 +306,23 @@ export const ModelWeights: React.FC<ModelWeightsProps> = ({
             <tbody className="divide-y divide-white/5">
               {heatmapData.map((row) => (
                 <tr key={row.lead} className="hover:bg-white/[0.02] transition-colors">
-                  <td className="py-2 px-3 font-semibold text-neutral-300">{row.lead}</td>
-                  <td className="py-2 px-3">
+                  <td className="py-2.5 px-3 font-semibold text-neutral-300">{row.lead}</td>
+                  <td className="py-2.5 px-3">
                     <span className={`px-2 py-0.5 rounded border font-semibold ${getHeatmapColor(row.ec)}`}>
                       {row.ec.toFixed(2)}
                     </span>
                   </td>
-                  <td className="py-2 px-3">
+                  <td className="py-2.5 px-3">
                     <span className={`px-2 py-0.5 rounded border font-semibold ${getHeatmapColor(row.gfs)}`}>
                       {row.gfs.toFixed(2)}
                     </span>
                   </td>
-                  <td className="py-2 px-3">
+                  <td className="py-2.5 px-3">
                     <span className={`px-2 py-0.5 rounded border font-semibold ${getHeatmapColor(row.icon)}`}>
                       {row.icon.toFixed(2)}
                     </span>
                   </td>
-                  <td className="py-2 px-3">
+                  <td className="py-2.5 px-3">
                     <span className={`px-2 py-0.5 rounded border font-bold ${getHeatmapColor(row.blend, true)}`}>
                       {row.blend.toFixed(2)}
                     </span>
@@ -337,7 +334,6 @@ export const ModelWeights: React.FC<ModelWeightsProps> = ({
         </div>
       </div>
 
-      {/* Mathematical Formulation Footer */}
       <div className="pt-3 border-t border-white/[0.06] flex items-start gap-2.5 text-xs text-slate-400 font-sans">
         <span className="px-2 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 font-mono text-[10px] font-bold shrink-0">
           FORMULATION
