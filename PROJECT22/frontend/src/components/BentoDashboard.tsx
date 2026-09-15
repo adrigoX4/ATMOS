@@ -123,7 +123,6 @@ export const BentoDashboard: React.FC<BentoDashboardProps> = ({
   const [loadingBma, setLoadingBma] = useState<boolean>(false);
   const [accuObs, setAccuObs] = useState<AccuObservation | null>(null);
 
-  // Pan-India Guidance state
   const [alerts, setAlerts] = useState<ExtremeAlertItem[]>([]);
   const [synopticRegime, setSynopticRegime] = useState<string>('Synoptic Normal');
   const [lastSyncTime, setLastSyncTime] = useState<string>('Live');
@@ -364,10 +363,12 @@ export const BentoDashboard: React.FC<BentoDashboardProps> = ({
 
   useEffect(() => {
     fetchStationWeights(selectedStation);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedStation]);
 
   useEffect(() => {
     fetchPanIndiaAlerts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const hourlyCards = [
